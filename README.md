@@ -1,56 +1,120 @@
-# WorkSphere HRMS (Phase 1 + Phase 2 starter)
+# WorkSphere – HR Management System (HRMS)
 
-## Requirements
-- Python 3.10+
-- Node.js 18+
-- VS Code
+WorkSphere is a full-stack Human Resource Management System designed to simplify employee management and HR operations through a web-based platform.
 
-## 1. Backend setup (PowerShell)
-Open a terminal in `WorkSphere/backend`:
+## Features
+
+- **Authentication & Authorization:** User registration, login, JWT authentication, and role-based access for Admin, HR, and Employees.
+- **Employee Management:** Create, view, search, and update employee records.
+- **Attendance Management:** Employee check-in, check-out, and attendance history.
+- **Leave Management:** Apply for leave, view requests, and approve or reject applications.
+- **Payroll Management:** Generate payroll records and calculate net salary.
+- **Notifications:** View notifications and mark them as read.
+- **Dashboard:** View employee statistics, attendance, pending leaves, and payroll summaries.
+
+## Technology Stack
+
+**Frontend:** React, Vite, JavaScript, Axios
+
+**Backend:** Python, FastAPI, SQLAlchemy
+
+**Database:** SQLite
+
+**Authentication:** JWT
+
+**API Documentation:** Swagger UI
+
+## Project Structure
+
+```text
+WorkSphere/
+├── backend/
+│   ├── app/
+│   │   ├── main.py
+│   │   ├── models.py
+│   │   ├── schemas.py
+│   │   ├── security.py
+│   │   └── database.py
+│   ├── requirements.txt
+│   └── .env.example
+├── frontend/
+│   ├── src/
+│   ├── package.json
+│   └── vite.config.js
+├── .gitignore
+└── README.md
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Python 3.10 or later
+- Node.js and npm
+- Git
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/PDinesh04/WorkSphere-HRMS.git
+cd WorkSphere-HRMS
+```
+
+### 2. Set up the backend
 
 ```powershell
+cd backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-Copy-Item .env.example .env
 ```
 
-Open `.env` and replace `SECRET_KEY` with a random secret of at least 32 characters. Example generation:
-```powershell
-python -c "import secrets; print(secrets.token_urlsafe(48))"
-```
-Copy the generated value into `.env`.
+Create a `.env` file in the `backend` directory using `.env.example` as a template. Set a strong, random `SECRET_KEY` of at least 32 characters.
 
-Start the API:
+Start the backend:
+
 ```powershell
 python -m uvicorn app.main:app --reload
 ```
-API docs: http://127.0.0.1:8000/docs
 
-## 2. Frontend setup
-Open a second terminal in `WorkSphere/frontend`:
+Backend URL: http://127.0.0.1:8000
+
+API documentation: http://127.0.0.1:8000/docs
+
+### 3. Set up the frontend
+
+Open a second terminal from the project root:
+
 ```powershell
+cd frontend
 npm install
 npm run dev
 ```
-Open the URL Vite prints, normally http://localhost:5173.
 
-## 3. First user / admin role
-Register the first user in the UI. All public registrations are EMPLOYEE for security. To make the first user an ADMIN for local development, stop the backend and run this from `WorkSphere/backend` with the venv active, after registering:
-```powershell
-python -c "from app.database import SessionLocal; from app.models import User; db=SessionLocal(); u=db.query(User).filter_by(username='YOUR_USERNAME').first(); print('User not found' if not u else 'Current role: '+u.role); u.role='ADMIN' if u else None; db.commit() if u else None; db.close()"
-```
-Replace `YOUR_USERNAME` with the registered username, restart the backend, then sign out/in to refresh the JWT. Do not expose this development workflow in production.
+Open the local URL printed by Vite, usually http://localhost:5173.
 
-## Included modules
-- JWT authentication, password hashing, active user checks
-- Employee profiles and HR/Admin employee list/update
-- Attendance check-in/check-out with one record per employee/day
-- Leave requests, HR/Admin approval, balances and policy endpoints
-- Payroll generation and employee-owned payroll history
-- Notifications, dashboard KPI endpoint
-- Admin user role assignment and deactivation
-- React login/register and basic self-service/HR/admin views
+## Security Notes
 
-## Important limitations
-This is a learning starter, not a production-certified payroll or HR system. It uses SQLite and `create_all` rather than migrations. Leave counting currently uses calendar days, not working days or holidays. Automatic absent marking, late-entry rules, overtime, payslip PDF generation, audit logs, password reset, refresh tokens, and robust production deployment still need implementation/testing. Configure backups, TLS, secrets, migrations, audit controls, and legal payroll rules before real use.
+- Never commit `.env` files, access tokens, passwords, or production secrets.
+- Use a strong secret key for JWT authentication.
+- Configure appropriate CORS origins before deploying.
+- Configure production-grade database backups and migrations before production use.
+
+## Future Improvements
+
+- Automated attendance and absence tracking
+- Payslip generation and downloadable reports
+- Advanced reporting and analytics
+- Password reset and account recovery
+- Automated tests and database migrations
+- Production deployment and monitoring
+
+## Author
+
+**Dinesh P**
+
+GitHub: [PDinesh04](https://github.com/PDinesh04)
+
+## Repository
+
+[WorkSphere-HRMS on GitHub](https://github.com/PDinesh04/WorkSphere-HRMS)
