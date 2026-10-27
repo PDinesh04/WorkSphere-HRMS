@@ -60,3 +60,19 @@ class PolicyIn(BaseModel):
 class RoleUpdate(BaseModel):
     role: str
     is_active: bool = True
+
+
+class ShiftIn(BaseModel):
+    name: str = Field(min_length=2, max_length=40)
+    start_time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+    end_time: str = Field(pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$")
+
+class EmployeeShiftIn(BaseModel):
+    employee_id: int = Field(gt=0)
+    shift_id: int = Field(gt=0)
+
+class PerformanceIn(BaseModel):
+    employee_id: int = Field(gt=0)
+    review_period: str = Field(min_length=3, max_length=80)
+    rating: int = Field(ge=1, le=5)
+    feedback: str = Field(min_length=2, max_length=5000)

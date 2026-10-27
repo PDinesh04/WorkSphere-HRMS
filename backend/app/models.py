@@ -82,3 +82,37 @@ class Notification(Base):
     message = Column(Text, nullable=False)
     is_read = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Shift(Base):
+    __tablename__ = "shifts"
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(40), unique=True, nullable=False)
+    start_time = Column(String(5), nullable=False)  # HH:MM local time
+    end_time = Column(String(5), nullable=False)
+
+class EmployeeShift(Base):
+    __tablename__ = "employee_shifts"
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    shift_id = Column(Integer, ForeignKey("shifts.id"), nullable=False, index=True)
+    assigned_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (UniqueConstraint("employee_id", name="uq_employee_shift_employee"),)
+
+class EmployeeDocument(Base):
+    __tablename__ = "documents"
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    file_name = Column(String(255), nullable=False)
+    stored_name = Column(String(255), unique=True, nullable=False)
+    file_url = Column(String(500), nullable=False)
+    uploaded_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+class PerformanceReview(Base):
+    __tablename__ = "performance"
+    id = Column(Integer, primary_key=True, index=True)
+    employee_id = Column(Integer, ForeignKey("employees.id"), nullable=False, index=True)
+    review_period = Column(String(80), nullable=False)
+    rating = Column(Integer, nullable=False)
+    feedback = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)

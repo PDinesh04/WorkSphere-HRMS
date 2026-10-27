@@ -3,34 +3,72 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
+from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import Depends, FastAPI, HTTPException, Query
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy import func
-from .database import Base, engine, get_db
+from sqlalchemy import func, or_
+import os, uuid, shutil
+from apscheduler.schedulers.background import BackgroundScheduler
+from .database import Base, engine, get_db, SessionLocal
 from . import models, schemas
 from .security import hash_password, verify_password, create_access_token, get_current_user, require_roles
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/token")
 Base.metadata.create_all(bind=engine)
 app = FastAPI(title="WorkSphere HRMS API", version="1.0.0",
-              description="Phase 1 and Phase 2 HRMS starter API")
-
-
+              description="WorkSphere HRMS Phase 1–3 API")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[],
-    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
+def _mark_absences(db: Session, now: datetime):
+    today = now.date(); created = 0
+    for assignment in db.query(models.EmployeeShift).all():
+        shift = db.get(models.Shift, assignment.shift_id)
+        emp = db.get(models.Employee, assignment.employee_id)
+        if not shift or not emp: continue
+        sh, sm = map(int, shift.start_time.split(":"))
+        eh, em = map(int, shift.end_time.split(":"))
+        overnight = (eh, em) <= (sh, sm)
+        candidate_dates = [today]
+        if overnight: candidate_dates.append(today - timedelta(days=1))
+        for shift_date in candidate_dates:
+            end_date = shift_date + timedelta(days=1) if overnight else shift_date
+            shift_end = datetime.combine(end_date, time(eh, em))
+            if shift_end > now: continue
+            existing = db.query(models.Attendance).filter_by(employee_id=emp.id, date=shift_date).first()
+            if existing is None:
+                db.add(models.Attendance(employee_id=emp.id, date=shift_date, status="ABSENT"))
+                db.add(models.Notification(user_id=emp.user_id, title="Attendance marked absent", message=f"No check-in was recorded for your {shift.name} shift on {shift_date.isoformat()}."))
+                created += 1
+    db.commit()
+    return created
 
+def _scheduled_absence_job():
+    db = SessionLocal()
+    try:
+        _mark_absences(db, datetime.now())
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
+
+_scheduler = BackgroundScheduler()
+
+@app.on_event("startup")
+def start_automation_scheduler():
+    if not _scheduler.running:
+        _scheduler.add_job(_scheduled_absence_job, "cron", hour=23, minute=59, id="daily_absence", replace_existing=True)
+        _scheduler.start()
+
+@app.on_event("shutdown")
+def stop_automation_scheduler():
+    if _scheduler.running:
+        _scheduler.shutdown(wait=False)
 
 def notify(db: Session, user_id: int, title: str, message: str):
     db.add(models.Notification(user_id=user_id, title=title, message=message))
@@ -77,34 +115,14 @@ def login(data: schemas.LoginIn, db: Session = Depends(get_db)):
     return {"access_token": create_access_token(user), "token_type": "bearer",
             "user": {"id": user.id, "username": user.username, "role": user.role}}
 
-
 @app.post("/auth/token", include_in_schema=False)
-def login_for_swagger(
-    form_data: OAuth2PasswordRequestForm = Depends(),
-    db: Session = Depends(get_db),
-):
-    user = (
-        db.query(models.User)
-        .filter(models.User.username == form_data.username)
-        .first()
-    )
-
-    if not user or not verify_password(
-        form_data.password, user.hashed_password
-    ):
-        raise HTTPException(
-            status_code=401,
-            detail="Incorrect username or password",
-        )
-
+def login_for_swagger(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = db.query(models.User).filter(models.User.username == form_data.username).first()
+    if not user or not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(401, "Incorrect username or password")
     if not user.is_active:
-        raise HTTPException(status_code=403, detail="Account is inactive")
-
-    return {
-        "access_token": create_access_token(user),
-        "token_type": "bearer",
-    }
-
+        raise HTTPException(403, "Account is inactive")
+    return {"access_token": create_access_token(user), "token_type": "bearer"}
 
 @app.get("/auth/me", response_model=schemas.UserOut)
 def me(user: models.User = Depends(get_current_user)):
@@ -169,12 +187,22 @@ def check_in(db: Session = Depends(get_db), user: models.User = Depends(get_curr
     if record and record.check_in:
         raise HTTPException(409, "Already checked in today")
     now = datetime.now()
+    assignment = db.query(models.EmployeeShift).filter_by(employee_id=emp.id).first()
+    status = "PRESENT"
+    if assignment:
+        shift = db.get(models.Shift, assignment.shift_id)
+        if shift:
+            start_hour, start_minute = map(int, shift.start_time.split(":"))
+            shift_start = datetime.combine(today, time(start_hour, start_minute))
+            if now > shift_start + timedelta(minutes=10):
+                status = "LATE"
+                notify(db, user.id, "Late attendance", f"Your check-in was after the 10-minute grace period for {shift.name} shift.")
     if not record:
-        record = models.Attendance(employee_id=emp.id, date=today, check_in=now, status="PRESENT")
+        record = models.Attendance(employee_id=emp.id, date=today, check_in=now, status=status)
         db.add(record)
     else:
         record.check_in = now
-        record.status = "PRESENT"
+        record.status = status
     db.commit(); db.refresh(record)
     return record
 
@@ -200,6 +228,14 @@ def apply_leave(data: schemas.LeaveIn, db: Session = Depends(get_db), user: mode
     days = (data.end_date - data.start_date).days + 1
     balance = db.query(models.LeaveBalance).filter_by(employee_id=emp.id, leave_type=data.leave_type).first()
     if balance and balance.remaining_days < days: raise HTTPException(400, "Insufficient leave balance")
+    conflict = db.query(models.LeaveRequest).filter(
+        models.LeaveRequest.employee_id == emp.id,
+        models.LeaveRequest.status.in_(["PENDING", "APPROVED"]),
+        models.LeaveRequest.start_date <= data.end_date,
+        models.LeaveRequest.end_date >= data.start_date,
+    ).first()
+    if conflict:
+        raise HTTPException(409, "This leave overlaps an existing pending or approved request")
     item = models.LeaveRequest(employee_id=emp.id, **data.model_dump())
     db.add(item)
     for hr in db.query(models.User).filter(models.User.role.in_(["HR", "ADMIN"]), models.User.is_active == True).all():
@@ -330,3 +366,164 @@ def delete_user(user_id: int, db: Session = Depends(get_db), user: models.User =
     target.is_active = False
     db.commit()
     return {"message": "User deactivated"}
+
+
+# ---------------- Phase 3: shifts and attendance automation ----------------
+@app.get("/shifts")
+def list_shifts(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    return db.query(models.Shift).order_by(models.Shift.start_time).all()
+
+@app.post("/shifts", status_code=201)
+def create_shift(data: schemas.ShiftIn, db: Session = Depends(get_db), user: models.User = Depends(require_roles("ADMIN"))):
+    if data.start_time == data.end_time:
+        raise HTTPException(422, "Shift start and end times must differ")
+    if db.query(models.Shift).filter_by(name=data.name.strip()).first():
+        raise HTTPException(409, "A shift with this name already exists")
+    item = models.Shift(name=data.name.strip(), start_time=data.start_time, end_time=data.end_time)
+    db.add(item); db.commit(); db.refresh(item); return item
+
+@app.get("/employee-shifts")
+def list_employee_shifts(db: Session = Depends(get_db), user: models.User = Depends(require_roles("HR", "ADMIN"))):
+    rows = db.query(models.EmployeeShift, models.Employee, models.Shift).join(models.Employee, models.EmployeeShift.employee_id == models.Employee.id).join(models.Shift, models.EmployeeShift.shift_id == models.Shift.id).all()
+    return [{"id": a.id, "employee_id": e.id, "employee_name": e.full_name, "shift_id": sh.id, "shift_name": sh.name, "start_time": sh.start_time, "end_time": sh.end_time} for a,e,sh in rows]
+
+@app.get("/employee-shifts/me")
+def my_shift(db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    emp = employee_for_user(db, user)
+    assignment = db.query(models.EmployeeShift).filter_by(employee_id=emp.id).first()
+    if not assignment: return {"assigned": False, "employee_id": emp.id, "employee_name": emp.full_name}
+    shift = db.get(models.Shift, assignment.shift_id)
+    return {"assigned": True, "employee_id": emp.id, "employee_name": emp.full_name, "shift_id": shift.id, "shift_name": shift.name, "start_time": shift.start_time, "end_time": shift.end_time}
+
+@app.post("/employee-shifts", status_code=201)
+def assign_shift(data: schemas.EmployeeShiftIn, db: Session = Depends(get_db), user: models.User = Depends(require_roles("HR", "ADMIN"))):
+    if not db.get(models.Employee, data.employee_id): raise HTTPException(404, "Employee not found")
+    if not db.get(models.Shift, data.shift_id): raise HTTPException(404, "Shift not found")
+    assignment = db.query(models.EmployeeShift).filter_by(employee_id=data.employee_id).first()
+    if assignment: assignment.shift_id = data.shift_id
+    else:
+        assignment = models.EmployeeShift(employee_id=data.employee_id, shift_id=data.shift_id); db.add(assignment)
+    db.commit(); db.refresh(assignment); return assignment
+
+@app.post("/automation/attendance/run")
+def run_attendance_automation(db: Session = Depends(get_db), user: models.User = Depends(require_roles("ADMIN"))):
+    """Idempotently mark assigned employees absent after their shift end for today."""
+    now = datetime.now()
+    created = _mark_absences(db, now)
+    return {"date": now.date().isoformat(), "absent_records_created": created}
+
+# ---------------- Module 15: leave calendar and team availability ----------------
+@app.get("/leave-calendar")
+def leave_calendar(start_date: date = Query(default=None), end_date: date = Query(default=None), db: Session = Depends(get_db), user: models.User = Depends(require_roles("HR", "ADMIN"))):
+    start = start_date or date.today().replace(day=1)
+    end = end_date or (start + timedelta(days=31))
+    if end < start: raise HTTPException(422, "end_date must be on or after start_date")
+    rows = db.query(models.LeaveRequest, models.Employee).join(models.Employee, models.LeaveRequest.employee_id == models.Employee.id).filter(models.LeaveRequest.status == "APPROVED", models.LeaveRequest.start_date <= end, models.LeaveRequest.end_date >= start).order_by(models.LeaveRequest.start_date).all()
+    return [{"leave_id": l.id, "employee_id": e.id, "employee_name": e.full_name, "department": e.department, "leave_type": l.leave_type, "start_date": l.start_date, "end_date": l.end_date, "status": l.status} for l,e in rows]
+
+# ---------------- Module 16: secure employee documents ----------------
+DOCUMENT_DIR = Path(__file__).resolve().parents[1] / "private_documents"
+DOCUMENT_DIR.mkdir(parents=True, exist_ok=True)
+ALLOWED_DOCUMENT_TYPES = {".pdf", ".png", ".jpg", ".jpeg", ".doc", ".docx"}
+MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
+
+@app.get("/documents")
+def list_documents(employee_id: int | None = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    query = db.query(models.EmployeeDocument)
+    if user.role not in ("HR", "ADMIN"):
+        emp = employee_for_user(db, user); query = query.filter_by(employee_id=emp.id)
+    elif employee_id is not None:
+        query = query.filter_by(employee_id=employee_id)
+    return [{"id": d.id, "employee_id": d.employee_id, "file_name": d.file_name, "file_url": d.file_url, "uploaded_at": d.uploaded_at} for d in query.order_by(models.EmployeeDocument.uploaded_at.desc()).all()]
+
+@app.post("/documents", status_code=201)
+def upload_document(employee_id: int | None = None, file: UploadFile = File(...), db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    if user.role not in ("HR", "ADMIN"):
+        own_employee = employee_for_user(db, user)
+        if employee_id is not None and own_employee.id != employee_id: raise HTTPException(403, "You can upload documents only to your own profile")
+        employee_id = own_employee.id
+    if employee_id is None: raise HTTPException(422, "employee_id is required for HR/Admin uploads")
+    if not db.get(models.Employee, employee_id): raise HTTPException(404, "Employee not found")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in ALLOWED_DOCUMENT_TYPES: raise HTTPException(415, "Unsupported file type")
+    stored_name = f"{uuid.uuid4().hex}{suffix}"
+    destination = DOCUMENT_DIR / stored_name
+    size = 0
+    try:
+        with destination.open("wb") as out:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_DOCUMENT_BYTES:
+                    raise HTTPException(413, "Maximum document size is 10 MB")
+                out.write(chunk)
+        record = models.EmployeeDocument(employee_id=employee_id, file_name=Path(file.filename).name[:255], stored_name=stored_name, file_url="")
+        db.add(record); db.commit(); db.refresh(record)
+        record.file_url = f"/documents/{record.id}/download"
+        db.commit(); db.refresh(record)
+        return {"id": record.id, "employee_id": record.employee_id, "file_name": record.file_name, "file_url": record.file_url, "uploaded_at": record.uploaded_at}
+    except Exception:
+        if destination.exists(): destination.unlink()
+        raise
+
+@app.get("/documents/{document_id}/download")
+def download_document(document_id: int, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    record = db.get(models.EmployeeDocument, document_id)
+    if not record: raise HTTPException(404, "Document not found")
+    if user.role not in ("HR", "ADMIN") and employee_for_user(db, user).id != record.employee_id:
+        raise HTTPException(403, "You cannot access this document")
+    path = DOCUMENT_DIR / record.stored_name
+    if not path.is_file(): raise HTTPException(404, "Document file is missing")
+    return FileResponse(path, filename=record.file_name, media_type="application/octet-stream")
+
+# ---------------- Module 17: performance reviews ----------------
+@app.get("/performance")
+def performance_reviews(employee_id: int | None = None, db: Session = Depends(get_db), user: models.User = Depends(get_current_user)):
+    query = db.query(models.PerformanceReview)
+    if user.role not in ("HR", "ADMIN"):
+        emp = employee_for_user(db, user); query = query.filter_by(employee_id=emp.id)
+    elif employee_id is not None:
+        query = query.filter_by(employee_id=employee_id)
+    return query.order_by(models.PerformanceReview.created_at.desc()).all()
+
+@app.post("/performance", status_code=201)
+def create_performance_review(data: schemas.PerformanceIn, db: Session = Depends(get_db), user: models.User = Depends(require_roles("HR", "ADMIN"))):
+    if not db.get(models.Employee, data.employee_id): raise HTTPException(404, "Employee not found")
+    item = models.PerformanceReview(**data.model_dump()); db.add(item)
+    emp = db.get(models.Employee, data.employee_id)
+    notify(db, emp.user_id, "Performance review added", f"A performance review for {data.review_period} is available.")
+    db.commit(); db.refresh(item); return item
+
+# ---------------- Module 18: analytics ----------------
+@app.get("/analytics/summary")
+def analytics_summary(start_date: date | None = None, end_date: date | None = None, department: str = "", db: Session = Depends(get_db), user: models.User = Depends(require_roles("HR", "ADMIN"))):
+    if start_date and end_date and end_date < start_date: raise HTTPException(422, "end_date must be on or after start_date")
+    employees_q = db.query(models.Employee)
+    if department: employees_q = employees_q.filter(models.Employee.department == department)
+    employees = employees_q.all(); ids = [e.id for e in employees]
+    att_q = db.query(models.Attendance).filter(models.Attendance.employee_id.in_(ids)) if ids else db.query(models.Attendance).filter(False)
+    leave_q = db.query(models.LeaveRequest).filter(models.LeaveRequest.employee_id.in_(ids)) if ids else db.query(models.LeaveRequest).filter(False)
+    perf_q = db.query(models.PerformanceReview).filter(models.PerformanceReview.employee_id.in_(ids)) if ids else db.query(models.PerformanceReview).filter(False)
+    if start_date: att_q=att_q.filter(models.Attendance.date >= start_date); leave_q=leave_q.filter(models.LeaveRequest.end_date >= start_date)
+    if end_date: att_q=att_q.filter(models.Attendance.date <= end_date); leave_q=leave_q.filter(models.LeaveRequest.start_date <= end_date)
+    attendance = att_q.all(); leaves = leave_q.all(); reviews = perf_q.all()
+    by_department = []
+    for dep in sorted({e.department or "Unassigned" for e in employees}):
+        group = [e for e in employees if (e.department or "Unassigned") == dep]
+        by_department.append({"department": dep, "employees": len(group), "active": sum(e.status == "ACTIVE" for e in group)})
+    return {"employee_count": len(employees), "attendance_records": len(attendance), "present_records": sum(a.status in ("PRESENT", "LATE", "HALF_DAY") for a in attendance), "late_records": sum(a.status == "LATE" for a in attendance), "absent_records": sum(a.status == "ABSENT" for a in attendance), "leave_requests": len(leaves), "approved_leaves": sum(l.status == "APPROVED" for l in leaves), "pending_leaves": sum(l.status == "PENDING" for l in leaves), "average_performance_rating": round(sum(r.rating for r in reviews)/len(reviews), 2) if reviews else None, "performance_reviews": len(reviews), "departments": by_department}
+
+# ---------------- Module 20: advanced employee search ----------------
+@app.get("/employees/search")
+def advanced_employee_search(q: str = "", department: str = "", role: str = "", status: str = "", attendance_status: str = "", min_rating: int | None = Query(default=None, ge=1, le=5), db: Session = Depends(get_db), user: models.User = Depends(require_roles("HR", "ADMIN"))):
+    query = db.query(models.Employee).join(models.User, models.Employee.user_id == models.User.id)
+    if q: query = query.filter(models.Employee.full_name.ilike(f"%{q}%"))
+    if department: query = query.filter(models.Employee.department.ilike(f"%{department}%"))
+    if role: query = query.filter(models.User.role == role.upper())
+    if status: query = query.filter(models.Employee.status == status.upper())
+    if attendance_status:
+        today = date.today()
+        query = query.join(models.Attendance, (models.Attendance.employee_id == models.Employee.id) & (models.Attendance.date == today)).filter(models.Attendance.status == attendance_status.upper())
+    if min_rating is not None:
+        query = query.filter(models.Employee.id.in_(db.query(models.PerformanceReview.employee_id).filter(models.PerformanceReview.rating >= min_rating)))
+    rows = query.order_by(models.Employee.full_name).all()
+    return [{"id": e.id, "user_id": e.user_id, "full_name": e.full_name, "designation": e.designation, "department": e.department, "joining_date": e.joining_date, "salary": e.salary, "status": e.status, "role": e.user.role} for e in rows]
