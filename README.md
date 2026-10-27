@@ -1,28 +1,34 @@
 # WorkSphere – HR Management System (HRMS)
 
-WorkSphere is a full-stack Human Resource Management System designed to simplify employee management and HR operations through a web-based platform.
+## Project Overview
+WorkSphere is a full-stack Human Resources Management System designed to manage employees, attendance, leave requests, payroll, performance reviews, documents, and HR operations.
+
+## Technology Stack
+- **Backend:** Python, FastAPI
+- **Frontend:** React, Vite, Axios
+- **Database:** SQLite
+- **Authentication:** JWT
+- **API Testing:** Swagger UI
 
 ## Features
 
-- **Authentication & Authorization:** User registration, login, JWT authentication, and role-based access for Admin, HR, and Employees.
-- **Employee Management:** Create, view, search, and update employee records.
-- **Attendance Management:** Employee check-in, check-out, and attendance history.
-- **Leave Management:** Apply for leave, view requests, and approve or reject applications.
-- **Payroll Management:** Generate payroll records and calculate net salary.
-- **Notifications:** View notifications and mark them as read.
-- **Dashboard:** View employee statistics, attendance, pending leaves, and payroll summaries.
+### Core HR Management
+- User registration and login
+- Role-based access control for Employee, HR, and Admin
+- Employee profile management
+- Attendance check-in and check-out
+- Leave requests, approvals, and leave policies
+- Payroll generation and records
+- Notifications and dashboards
 
-## Technology Stack
-
-**Frontend:** React, Vite, JavaScript, Axios
-
-**Backend:** Python, FastAPI, SQLAlchemy
-
-**Database:** SQLite
-
-**Authentication:** JWT
-
-**API Documentation:** Swagger UI
+### Advanced HR Features
+- Shift creation and employee shift assignments
+- Automated attendance and absence marking
+- Leave calendar and team view
+- Employee document upload and download
+- Performance reviews and ratings
+- Analytics and department reports
+- Advanced employee search and filtering
 
 ## Project Structure
 
@@ -30,60 +36,34 @@ WorkSphere is a full-stack Human Resource Management System designed to simplify
 WorkSphere/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py
-│   │   ├── models.py
-│   │   ├── schemas.py
-│   │   ├── security.py
-│   │   └── database.py
-│   ├── requirements.txt
-│   └── .env.example
+│   ├── private_documents/
+│   └── requirements.txt
 ├── frontend/
 │   ├── src/
-│   ├── package.json
-│   └── vite.config.js
-├── .gitignore
+│   └── package.json
 └── README.md
 ```
 
-## Getting Started
+## Running the Project
 
-### Prerequisites
+### 1. Start the Backend
 
-- Python 3.10 or later
-- Node.js and npm
-- Git
-
-### 1. Clone the repository
-
-```bash
-git clone https://github.com/PDinesh04/WorkSphere-HRMS.git
-cd WorkSphere-HRMS
-```
-
-### 2. Set up the backend
+Open a terminal in VS Code:
 
 ```powershell
 cd backend
-python -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
-```
-
-Create a `.env` file in the `backend` directory using `.env.example` as a template. Set a strong, random `SECRET_KEY` of at least 32 characters.
-
-Start the backend:
-
-```powershell
 python -m uvicorn app.main:app --reload
 ```
 
-Backend URL: http://127.0.0.1:8000
+Backend API: http://127.0.0.1:8000
 
-API documentation: http://127.0.0.1:8000/docs
+Swagger documentation: http://127.0.0.1:8000/docs
 
-### 3. Set up the frontend
+### 2. Start the Frontend
 
-Open a second terminal from the project root:
+Open a second terminal:
 
 ```powershell
 cd frontend
@@ -91,30 +71,18 @@ npm install
 npm run dev
 ```
 
-Open the local URL printed by Vite, usually http://localhost:5173.
+Open the local URL shown in the terminal, usually http://localhost:5173.
 
-## Security Notes
+## Security
+- JWT-based authentication
+- Role-based authorization
+- Input validation
+- Secure handling of uploaded documents
 
-- Never commit `.env` files, access tokens, passwords, or production secrets.
-- Use a strong secret key for JWT authentication.
-- Configure appropriate CORS origins before deploying.
-- Configure production-grade database backups and migrations before production use.
-
-## Future Improvements
-
-- Automated attendance and absence tracking
-- Payslip generation and downloadable reports
-- Advanced reporting and analytics
-- Password reset and account recovery
-- Automated tests and database migrations
-- Production deployment and monitoring
-
-## Author
-
-**Dinesh P**
-
-GitHub: [PDinesh04](https://github.com/PDinesh04)
+**Important:** Do not commit passwords, secret keys, access tokens, database credentials, or private employee documents to GitHub.
 
 ## Repository
+https://github.com/PDinesh04/WorkSphere-HRMS
 
-[WorkSphere-HRMS on GitHub](https://github.com/PDinesh04/WorkSphere-HRMS)
+## Project Status
+Phase 1, Phase 2, and Phase 3 features have been implemented and tested in the local development environment. Further testing and deployment configuration may be required before production use.
