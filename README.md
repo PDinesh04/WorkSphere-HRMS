@@ -1,34 +1,37 @@
 # WorkSphere – HR Management System (HRMS)
 
 ## Project Overview
-WorkSphere is a full-stack Human Resources Management System designed to manage employees, attendance, leave requests, payroll, performance reviews, documents, and HR operations.
-
-## Technology Stack
-- **Backend:** Python, FastAPI
-- **Frontend:** React, Vite, Axios
-- **Database:** SQLite
-- **Authentication:** JWT
-- **API Testing:** Swagger UI
+WorkSphere is a full-stack Human Resource Management System designed to simplify employee management and HR operations.
 
 ## Features
-
-### Core HR Management
-- User registration and login
+- User registration and login using JWT authentication
 - Role-based access control for Employee, HR, and Admin
-- Employee profile management
+- Employee management and search
 - Attendance check-in and check-out
-- Leave requests, approvals, and leave policies
-- Payroll generation and records
-- Notifications and dashboards
+- Leave requests and approvals
+- Payroll management
+- Shift management and assignments
+- Employee document uploads
+- Notifications and performance reviews
+- Reports and analytics
+- CSV employee import and export
 
-### Advanced HR Features
-- Shift creation and employee shift assignments
-- Automated attendance and absence marking
-- Leave calendar and team view
-- Employee document upload and download
-- Performance reviews and ratings
-- Analytics and department reports
-- Advanced employee search and filtering
+## Technology Stack
+
+### Backend
+- Python
+- FastAPI
+- SQLAlchemy
+- Pydantic
+- SQLite
+- JWT authentication
+
+### Frontend
+- React
+- Vite
+- JavaScript
+- Axios
+- CSS
 
 ## Project Structure
 
@@ -36,53 +39,74 @@ WorkSphere is a full-stack Human Resources Management System designed to manage 
 WorkSphere/
 ├── backend/
 │   ├── app/
-│   ├── private_documents/
-│   └── requirements.txt
-├── frontend/
-│   ├── src/
-│   └── package.json
-└── README.md
+│   ├── employees.csv
+│   ├── requirements.txt
+│   └── .env
+└── frontend/
+    ├── src/
+    ├── package.json
+    └── index.html
 ```
 
-## Running the Project
+## Setup Instructions
 
-### 1. Start the Backend
+### 1. Backend
 
-Open a terminal in VS Code:
+Open a terminal in the `backend` directory.
+
+Activate your virtual environment in Windows PowerShell:
 
 ```powershell
-cd backend
 .\venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
+```
+
+Install dependencies:
+
+```powershell
+pip install -r requirements.txt
+```
+
+Start the backend:
+
+```powershell
 python -m uvicorn app.main:app --reload
 ```
 
-Backend API: http://127.0.0.1:8000
+Backend API documentation:
 
-Swagger documentation: http://127.0.0.1:8000/docs
+http://127.0.0.1:8000/docs
 
-### 2. Start the Frontend
+### 2. Frontend
 
-Open a second terminal:
+Open a second terminal in the `frontend` directory.
+
+Install dependencies:
 
 ```powershell
-cd frontend
 npm install
+```
+
+Start the frontend:
+
+```powershell
 npm run dev
 ```
 
-Open the local URL shown in the terminal, usually http://localhost:5173.
+Open the local URL printed by Vite, usually:
 
-## Security
-- JWT-based authentication
-- Role-based authorization
-- Input validation
-- Secure handling of uploaded documents
+http://localhost:5173/
 
-**Important:** Do not commit passwords, secret keys, access tokens, database credentials, or private employee documents to GitHub.
+## Security Notes
+- Keep `.env` and secret keys private.
+- Do not commit passwords, tokens, virtual environments, or database files containing sensitive data.
+- Change temporary passwords before using the application outside local testing.
+- Configure a strong secret key for JWT authentication.
 
-## Repository
-https://github.com/PDinesh04/WorkSphere-HRMS
+## Future Improvements
+- Automated testing
+- Improved dashboard visualizations
+- Password reset functionality
+- Deployment to a production server
 
-## Project Status
-Phase 1, Phase 2, and Phase 3 features have been implemented and tested in the local development environment. Further testing and deployment configuration may be required before production use.
+## Author
+WorkSphere HRMS Project

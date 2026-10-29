@@ -9,6 +9,8 @@ from sqlalchemy.orm import Session
 from .database import get_db
 from .models import User
 
+from dotenv import load_dotenv
+load_dotenv()
 SECRET_KEY = os.getenv("SECRET_KEY", "")
 if len(SECRET_KEY) < 32 or SECRET_KEY.startswith("replace-"):
     raise RuntimeError("Set SECRET_KEY to a random secret of at least 32 characters in backend/.env")

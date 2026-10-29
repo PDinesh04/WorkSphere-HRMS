@@ -2,24 +2,37 @@
 # Python
 __pycache__/
 *.py[cod]
+*.pyd
 venv/
 .venv/
+env/
 
-# Environment secrets
+# Environment variables and secrets
 .env
-**/.env
+.env.*
+!.env.example
 
-# Database
+# Databases and local data
 *.db
+*.sqlite
 *.sqlite3
 
-# Node.js
+# Frontend dependencies and builds
 node_modules/
+frontend/node_modules/
 frontend/dist/
+
+# Logs
+*.log
+npm-debug.log*
 
 # IDE and operating system
 .vscode/
 .idea/
 .DS_Store
+Thumbs.db
 
-backend/private_documents/
+# Test and coverage files
+.pytest_cache/
+.coverage
+htmlcov/

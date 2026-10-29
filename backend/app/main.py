@@ -2,29 +2,53 @@ from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+import csv
+import io
+from fastapi.responses import StreamingResponse
 
+from app.analytics_routes import router as analytics_router
+from app import settlement_models
+from app.settlement_routes import router as settlement_router
+from app import exit_models
+from app.exit_routes import router as exit_router
+from app import resignation_models
+from app.resignation_routes import router as resignation_router
+from app.onboarding_routes import router as onboarding_router
+from app import onboarding_models
 from fastapi import Depends, FastAPI, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
+from app import audit_models
+from app.audit_routes import router as audit_router
+from app.employee_csv import router as employee_csv_router
+
+from app import settings_models
+from app.settings_routes import router as settings_router
 from sqlalchemy import func, or_
 import os, uuid, shutil
 from apscheduler.schedulers.background import BackgroundScheduler
 from .database import Base, engine, get_db, SessionLocal
 from . import models, schemas
 from .security import hash_password, verify_password, create_access_token, get_current_user, require_roles
-
 Base.metadata.create_all(bind=engine)
-app = FastAPI(title="WorkSphere HRMS API", version="1.0.0",
-              description="WorkSphere HRMS Phase 1–3 API")
 
+app = FastAPI(
+    title="WorkSphere HRMS API",
+    version="1.0.0",
+    description="WorkSphere HRMS Phase 1–3 API"
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True, allow_methods=["*"], allow_headers=["*"],
 )
 
+from app.employee_csv import router as employee_csv_router
+app.include_router(employee_csv_router)
+app.include_router(onboarding_router)
+app.include_router(employee_csv_router)
 def _mark_absences(db: Session, now: datetime):
     today = now.date(); created = 0
     for assignment in db.query(models.EmployeeShift).all():
@@ -45,9 +69,32 @@ def _mark_absences(db: Session, now: datetime):
                 db.add(models.Attendance(employee_id=emp.id, date=shift_date, status="ABSENT"))
                 db.add(models.Notification(user_id=emp.user_id, title="Attendance marked absent", message=f"No check-in was recorded for your {shift.name} shift on {shift_date.isoformat()}."))
                 created += 1
+            record_audit(
+    db,
+    user,
+    "ATTENDANCE_RECORDED",
+    f"Attendance recorded for employee ID {data.employee_id}",
+)
+    record_audit(
+    db,
+    user,
+    "ATTENDANCE_CHECK_IN",
+    f"Employee {emp.full_name} checked in",
+    )
+    record_audit(
+    db,
+    user,
+    "ATTENDANCE_CHECK_OUT",
+    f"Employee {emp.full_name} checked out",
+    )
     db.commit()
     return created
-
+app.include_router(resignation_router)
+app.include_router(exit_router)
+app.include_router(settlement_router)
+app.include_router(analytics_router)
+app.include_router(settings_router)
+app.include_router(audit_router)
 def _scheduled_absence_job():
     db = SessionLocal()
     try:
@@ -73,11 +120,75 @@ def stop_automation_scheduler():
 def notify(db: Session, user_id: int, title: str, message: str):
     db.add(models.Notification(user_id=user_id, title=title, message=message))
 
+
+def record_audit(
+    db: Session,
+    user: models.User,
+    action: str,
+    details: str = "",
+):
+    from app.audit_models import AuditLog
+
+    log = AuditLog(
+        user_id=user.id,
+        username=user.username,
+        action=action,
+        details=details,
+    )
+
+    db.add(log)
 def employee_for_user(db: Session, user: models.User):
     emp = db.query(models.Employee).filter_by(user_id=user.id).first()
     if not emp:
         raise HTTPException(404, "Employee profile not found for this user")
     return emp
+@app.get("/employees/export/csv")
+def export_employees_csv(
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_roles("HR", "ADMIN")),
+):
+    employees = (
+        db.query(models.Employee)
+        .order_by(models.Employee.id)
+        .all()
+    )
+
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    writer.writerow([
+        "Employee ID",
+        "User ID",
+        "Full Name",
+        "Department",
+        "Designation",
+        "Salary",
+        "Joining Date",
+        "Status",
+    ])
+
+    for emp in employees:
+        writer.writerow([
+            emp.id,
+            emp.user_id,
+            emp.full_name,
+            emp.department,
+            emp.designation,
+            emp.salary,
+            emp.joining_date,
+            emp.status,
+        ])
+
+    output.seek(0)
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition":
+                'attachment; filename="worksphere_employees.csv"'
+        },
+    )
 
 @app.get("/")
 def home():
@@ -153,9 +264,93 @@ def create_employee(data: schemas.EmployeeIn, db: Session = Depends(get_db),
     for policy in db.query(models.LeavePolicy).all():
         db.add(models.LeaveBalance(employee_id=emp.id, leave_type=policy.leave_type,
                                    remaining_days=policy.total_days_allowed))
-    db.commit(); db.refresh(emp)
+    record_audit(
+        db,
+        user,
+        "EMPLOYEE_CREATED",
+        f"Created employee profile for {emp.full_name}",
+    )
+
+    db.commit()
+    db.refresh(emp)
     return emp
 
+@app.post("/employees/import/csv")
+def import_employees_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: models.User = Depends(require_roles("HR", "ADMIN")),
+):
+    if not file.filename or not file.filename.lower().endswith(".csv"):
+        raise HTTPException(415, "Please upload a CSV file")
+
+    try:
+        content = file.file.read().decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(content))
+
+        required = {
+            "user_id", "full_name", "designation",
+            "department", "salary", "status",
+        }
+
+        if not reader.fieldnames or not required.issubset(reader.fieldnames):
+            raise HTTPException(422, "Invalid CSV headers")
+
+        rows = list(reader)
+        created = 0
+
+        for row in rows:
+            user_id = int(row["user_id"])
+            name = row["full_name"].strip()
+            salary = float(row["salary"])
+            status = row["status"].strip().upper()
+
+            if not name or salary < 0:
+                raise HTTPException(422, "Invalid name or salary")
+
+            if status not in ("ACTIVE", "INACTIVE"):
+                raise HTTPException(422, "Invalid employee status")
+
+            if not db.get(models.User, user_id):
+                raise HTTPException(422, f"User ID {user_id} not found")
+
+            if db.query(models.Employee).filter_by(user_id=user_id).first():
+                raise HTTPException(
+                    409, f"User ID {user_id} already has an employee profile"
+                )
+
+            employee = models.Employee(
+                user_id=user_id,
+                full_name=name,
+                designation=row["designation"].strip(),
+                department=row["department"].strip(),
+                salary=salary,
+                status=status,
+            )
+            db.add(employee)
+            db.flush()
+
+            for policy in db.query(models.LeavePolicy).all():
+                db.add(models.LeaveBalance(
+                    employee_id=employee.id,
+                    leave_type=policy.leave_type,
+                    remaining_days=policy.total_days_allowed,
+                ))
+
+            record_audit(
+                db, user, "EMPLOYEE_IMPORTED",
+                f"Imported employee profile for {name}",
+            )
+            created += 1
+
+        db.commit()
+        return {"message": "CSV import completed", "created": created}
+
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        file.file.close()
 @app.patch("/employees/{employee_id}")
 def update_employee(employee_id: int, data: schemas.EmployeeUpdate, db: Session = Depends(get_db),
                     user: models.User = Depends(require_roles("HR", "ADMIN"))):

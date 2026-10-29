@@ -1,7 +1,11 @@
+
 import React, { useEffect, useState } from "react";
 import { Link, Navigate, Route, Routes, useNavigate } from "react-router-dom";
 import api from "./api";
-
+import OnboardingModule from "./OnboardingModule";
+import AnalyticsDashboard from "./AnalyticsDashboard";
+import Employees from "./pages/Employees";
+import SystemSettings from "./SystemSettings";
 function Auth({ onLogin }) {
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({ username: "", email: "", password: "", full_name: "" });
@@ -38,6 +42,10 @@ function Dashboard({ user, onLogout }) {
   const [message, setMessage] = useState("");
   const [profile, setProfile] = useState(null);
   const [leaveForm, setLeaveForm] = useState({ leave_type:"CASUAL", start_date:"", end_date:"", reason:"" });
+  const [resignationForm, setResignationForm] = useState({
+  reason: "",
+  notice_period: 30,
+});
   const [payrollForm, setPayrollForm] = useState({ employee_id:"", month:new Date().toISOString().slice(0,7), basic_salary:"", allowances:"0", deductions:"0", bonus:"0" });
   const [policyForm, setPolicyForm] = useState({ leave_type:"CASUAL", total_days_allowed:12 });
   const [employeeForm, setEmployeeForm] = useState({ user_id:"", full_name:"", designation:"", department:"", salary:"0", status:"ACTIVE" });
@@ -56,7 +64,7 @@ function Dashboard({ user, onLogout }) {
         if (hr) setDashboard((await api.get("/dashboard")).data);
         else setProfile((await api.get("/employees/me")).data);
       } else {
-        const urls = { Employees:"/employees", Attendance:"/attendance", Leaves:"/leaves", Payroll:"/payroll", Notifications:"/notifications", "Leave balances":"/leave-balances", "Leave policies":"/leave-policies", "User management":"/admin/users", Shifts:"/shifts", "Shift assignments":"/employee-shifts", "Leave calendar":"/leave-calendar", Documents:"/documents", Performance:"/performance", Reports:"/analytics/summary", "My Shift":"/employee-shifts/me" };
+        const urls = { Employees:"/employees", Attendance:"/attendance", Leaves:"/leaves", Resignations:"/resignations/", Payroll:"/payroll", Notifications:"/notifications", "Leave balances":"/leave-balances", "Leave policies":"/leave-policies", "User management":"/admin/users", Shifts:"/shifts", "Shift assignments":"/employee-shifts", "Leave calendar":"/leave-calendar", Documents:"/documents", Performance:"/performance", Reports:"/analytics/summary", "My Shift":"/employee-shifts/me" };
         if (urls[section]) {
           const result = await api.get(urls[section]); setData(result.data);
           if(section==="User management") setUserList(result.data);
@@ -71,13 +79,17 @@ function Dashboard({ user, onLogout }) {
     if (!items?.length) return <p className="muted">No records found.</p>;
     return <div className="tablewrap"><table><thead><tr>{Object.keys(items[0]).map(k=><th key={k}>{k.replaceAll("_"," ")}</th>)}{section==="Leaves"&&hr&&<th>Actions</th>}{section==="User management"&&admin&&<th>Role</th>}{section==="Documents"&&<th>Download</th>}{section==="Notifications"&&<th>Action</th>}</tr></thead><tbody>{items.map((item,i)=><tr key={item.id??i}>{Object.entries(item).map(([k,v])=><td key={k}>{typeof v==="object"&&v!==null?JSON.stringify(v):String(v??"—")}</td>)}{section==="Leaves"&&hr&&<td>{item.status==="PENDING"&&<><button onClick={()=>act(()=>api.patch(`/leaves/${item.id}/decision`,{status:"APPROVED"}),"Leave approved")}>Approve</button> <button className="danger" onClick={()=>act(()=>api.patch(`/leaves/${item.id}/decision`,{status:"REJECTED"}),"Leave rejected")}>Reject</button></>}</td>}{section==="User management"&&admin&&<td><select value={item.role} onChange={e=>act(()=>api.patch(`/admin/users/${item.id}`,{role:e.target.value,is_active:item.is_active}),"User updated")}><option>EMPLOYEE</option><option>HR</option><option>ADMIN</option></select></td>}{section==="Documents"&&<td><button onClick={async()=>{try{const r=await api.get(`/documents/${item.id}/download`,{responseType:"blob"});const url=URL.createObjectURL(r.data);const a=document.createElement("a");a.href=url;a.download=item.file_name||"document";a.click();URL.revokeObjectURL(url);}catch(e){setMessage(e.response?.data?.detail||"Download failed");}}}>Download</button></td>}{section==="Notifications"&&!item.is_read&&<td><button onClick={()=>act(()=>api.patch(`/notifications/${item.id}/read`),"Notification marked read")}>Mark read</button></td>}{section==="Notifications"&&item.is_read&&<td>Read</td>}</tr>)}</tbody></table></div>;
   }
-  const sections = ["Overview","My profile","Attendance","Leaves","Leave balances","Payroll","Notifications","Documents","Performance","My Shift",...(hr?["Employees","Leave policies","Shifts","Shift assignments","Leave calendar","Reports","Advanced search"]:[]),...(admin?["User management","Run attendance automation"]:[] )];
+  const sections = ["Overview","My profile","Attendance","Leaves","Resignations","Leave balances","Payroll","Notifications","Documents","Performance","My Shift","Onboarding","Analytics",...(hr?["Employees","Leave policies","Shifts","Shift assignments","Leave calendar","Reports","Advanced search"]:[]),...(admin?["User management","Run attendance automation", "System Settings"]:[] )];
   return <div className="layout"><aside><div className="brand smallbrand">W<span>S</span></div><h2>WorkSphere</h2><p className="muted">{user.username} · {user.role}</p>{sections.map(s=><button key={s} className={section===s?"nav active":"nav"} onClick={()=>{setSection(s);setMessage("");}}>{s}</button>)}<button className="nav logout" onClick={onLogout}>Sign out</button></aside>
   <main><header><div><p className="eyebrow">HUMAN RESOURCES</p><h1>{section}</h1></div><span className="role">{user.role}</span></header>
   {message&&<div className="notice">{message}</div>}
   {section==="Overview" && (hr ? dashboard ? <div className="cards">{Object.entries(dashboard).map(([k,v])=><div className="metric" key={k}><p>{k.replaceAll("_"," ")}</p><strong>{v !== null && typeof v === "object"? JSON.stringify(v): String(v ?? "—")}</strong></div>)}</div> : <p>Loading overview…</p> : <div className="panel"><h3>Welcome back, {user.username}</h3><p>Your self-service workspace is ready.</p>{profile&&<p>{profile.employee.full_name} · {profile.employee.department||"Department not set"}</p>}</div>)}
   {section==="My profile" && <div className="panel">{profile ? <pre>{JSON.stringify(profile,null,2)}</pre> : <button onClick={()=>act(async()=>setProfile((await api.get("/employees/me")).data),"Profile loaded")}>Load profile</button>}</div>}
+  {section==="Onboarding"&&<OnboardingModule isHR={hr} />}
+  {section === "System Settings" && admin && <SystemSettings />}
+  {section==="Analytics" && hr && <AnalyticsDashboard />}
   {["Employees","Attendance","Leaves","Leave balances","Payroll","Notifications","Leave policies","User management","Shifts","Shift assignments","Leave calendar","Documents","Performance","Advanced search"].includes(section)&&list(data)}
+  {section==="Resignations"&&<div className="panel"><h3>{hr ? "Resignation requests" : "Submit resignation"}</h3><form className="formgrid" onSubmit={e=>{e.preventDefault();act(()=>api.post("/resignations/",{reason:resignationForm.reason,notice_period:Number(resignationForm.notice_period)}),"Resignation submitted");setResignationForm({reason:"",notice_period:30});}}><label>Reason</label><textarea minLength={3} maxLength={1000} required value={resignationForm.reason} onChange={e=>setResignationForm({...resignationForm,reason:e.target.value})}/><label>Notice period (days)</label><input type="number" min="0" max="365" required value={resignationForm.notice_period} onChange={e=>setResignationForm({...resignationForm,notice_period:e.target.value})}/><button className="primary">Submit resignation</button></form><h3>Resignation history</h3>{!data?.length?<p className="muted">No resignation requests found.</p>:<div className="tablewrap"><table><thead><tr><th>ID</th><th>Employee ID</th><th>Reason</th><th>Notice period</th><th>Status</th><th>Created at</th>{hr&&<th>Actions</th>}</tr></thead><tbody>{data.map(item=><tr key={item.id}><td>{item.id}</td><td>{item.employee_id}</td><td>{item.reason}</td><td>{item.notice_period}</td><td>{item.status}</td><td>{item.created_at}</td>{hr&&<td>{item.status==="PENDING"?<><button onClick={()=>act(()=>api.patch(`/resignations/${item.id}/decision`,{status:"APPROVED"}),"Resignation approved")}>Approve</button> <button className="danger" onClick={()=>act(()=>api.patch(`/resignations/${item.id}/decision`,{status:"REJECTED"}),"Resignation rejected")}>Reject</button></>:"Processed"}</td>}</tr>)}</tbody></table></div>}</div>}
   {section==="Reports"&&data&&<div className="cards">{Object.entries(data).filter(([k,v])=>!Array.isArray(v)).map(([k,v])=><div className="metric" key={k}><p>{k.replaceAll("_"," ")}</p><strong>
   {v !== null && typeof v === "object"
     ? JSON.stringify(v)
@@ -94,6 +106,96 @@ function Dashboard({ user, onLogout }) {
   {section==="Attendance"&&<div className="actions"><button className="primary" onClick={()=>act(()=>api.post("/attendance/check-in"),"Checked in")}>Check in</button><button onClick={()=>act(()=>api.post("/attendance/check-out"),"Checked out")}>Check out</button></div>}
   {section==="Leaves"&&<form className="panel formgrid" onSubmit={e=>{e.preventDefault();act(()=>api.post("/leaves",leaveForm),"Leave request submitted");}}><h3>Apply for leave</h3><label>Type</label><select value={leaveForm.leave_type} onChange={e=>setLeaveForm({...leaveForm,leave_type:e.target.value})}><option>SICK</option><option>CASUAL</option><option>PAID</option></select><label>Start date</label><input type="date" required value={leaveForm.start_date} onChange={e=>setLeaveForm({...leaveForm,start_date:e.target.value})}/><label>End date</label><input type="date" required value={leaveForm.end_date} onChange={e=>setLeaveForm({...leaveForm,end_date:e.target.value})}/><label>Reason</label><textarea required value={leaveForm.reason} onChange={e=>setLeaveForm({...leaveForm,reason:e.target.value})}/><button className="primary">Submit leave request</button></form>}
   {section==="Employees"&&hr&&<form className="panel formgrid" onSubmit={e=>{e.preventDefault();act(()=>api.post("/employees",{...employeeForm,user_id:Number(employeeForm.user_id),salary:Number(employeeForm.salary)}),"Employee created");}}><h3>Add employee profile</h3>{Object.keys(employeeForm).map(k=><React.Fragment key={k}><label>{k.replaceAll("_"," ")}</label><input required={["user_id","full_name"].includes(k)} value={employeeForm[k]} onChange={e=>setEmployeeForm({...employeeForm,[k]:e.target.value})}/></React.Fragment>)}<button className="primary">Add employee</button><p className="muted small">Register the user's account first; use its user ID.</p></form>}
+     {section === "Employees" && hr && (
+    <div className="panel">
+      <h3>Employee CSV Import / Export</h3>
+
+      {/* Import CSV */}
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+
+          const input = e.currentTarget.elements.namedItem("csvFile");
+          const file = input?.files?.[0];
+
+          if (!file) {
+            setMessage("Please select a CSV file.");
+            return;
+          }
+
+          const formData = new FormData();
+          formData.append("file", file);
+
+          try {
+            const response = await api.post(
+              "/employees/import/csv",
+              formData
+            );
+
+            setMessage(
+              `Import completed: ${response.data.imported} imported, ${response.data.skipped} skipped.`
+            );
+
+            e.currentTarget.reset();
+            await load();
+          } catch (error) {
+            setMessage(
+              error.response?.data?.detail || "CSV import failed."
+            );
+          }
+        }}
+      >
+        <label htmlFor="csvFile">Choose employee CSV file</label>
+
+        <input
+          id="csvFile"
+          name="csvFile"
+          type="file"
+          accept=".csv,text/csv"
+          required
+        />
+
+        <button className="primary" type="submit">
+          Upload CSV
+        </button>
+      </form>
+
+      <hr />
+
+      {/* Export CSV */}
+      <button
+        type="button"
+        className="primary"
+        onClick={async () => {
+          try {
+            const response = await api.get("/employees/export/csv", {
+              responseType: "blob",
+            });
+
+            const url = window.URL.createObjectURL(response.data);
+            const link = document.createElement("a");
+
+            link.href = url;
+            link.download = "worksphere_employees.csv";
+
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+
+            window.URL.revokeObjectURL(url);
+            setMessage("Employee CSV exported successfully.");
+          } catch (error) {
+            setMessage(
+              error.response?.data?.detail || "Employee export failed."
+            );
+          }
+        }}
+      >
+        Export Employees CSV
+      </button>
+    </div>
+  )}
+
   {section==="Payroll"&&hr&&<form className="panel formgrid" onSubmit={e=>{e.preventDefault();act(()=>api.post("/payroll",{...payrollForm,employee_id:Number(payrollForm.employee_id),basic_salary:Number(payrollForm.basic_salary),allowances:Number(payrollForm.allowances),deductions:Number(payrollForm.deductions),bonus:Number(payrollForm.bonus)}),"Payroll generated");}}><h3>Generate payroll</h3>{Object.keys(payrollForm).map(k=><React.Fragment key={k}><label>{k.replaceAll("_"," ")}</label><input required value={payrollForm[k]} onChange={e=>setPayrollForm({...payrollForm,[k]:e.target.value})}/></React.Fragment>)}<button className="primary">Generate payroll</button></form>}
   {section==="Leave policies"&&admin&&<form className="panel formgrid" onSubmit={e=>{e.preventDefault();act(()=>api.post("/leave-policies",{...policyForm,total_days_allowed:Number(policyForm.total_days_allowed)}),"Policy created");}}><h3>Create leave policy</h3><label>Leave type</label><select value={policyForm.leave_type} onChange={e=>setPolicyForm({...policyForm,leave_type:e.target.value})}><option>SICK</option><option>CASUAL</option><option>PAID</option></select><label>Allowed days</label><input type="number" min="0" value={policyForm.total_days_allowed} onChange={e=>setPolicyForm({...policyForm,total_days_allowed:e.target.value})}/><button className="primary">Save policy</button></form>}
   </main></div>;
